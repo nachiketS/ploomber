@@ -147,7 +147,6 @@ class PloomberNotebookClient(NotebookClient):
     async def _async_poll_stdin_msg(self, parent_msg_id: str,
                                     cell: NotebookNode,
                                     cell_index: int) -> None:
-        print(f'enter stdin polling!')
         assert self.kc is not None
 
         # looks like this sometimes returns false
@@ -155,7 +154,6 @@ class PloomberNotebookClient(NotebookClient):
 
         if True:
             # if msg_received:  #or cell_index == 0:
-            print(f'stdin message ready!')
             from queue import Empty
 
             while True:
@@ -179,8 +177,6 @@ class PloomberNotebookClient(NotebookClient):
                             print(msg['content']['text'])
                         else:
                             print(msg['content'])
-        else:
-            print('no message!')
 
     async def async_execute_cell(
         self,
@@ -245,7 +241,6 @@ class PloomberNotebookClient(NotebookClient):
 
         await run_hook(self.on_cell_execute, cell=cell, cell_index=cell_index)
         # execute cell
-        print(f'EXECUTING CELL {cell_index} - {cell["source"]}')
         parent_msg_id = await ensure_async(
             self.kc.execute(cell.source,
                             store_history=store_history,
@@ -253,7 +248,6 @@ class PloomberNotebookClient(NotebookClient):
         await run_hook(self.on_cell_complete, cell=cell, cell_index=cell_index)
 
         # important: first thing we do is to check for stdin
-        print(f'polling stdin message (idx {cell_index})')
         # from ipdb import set_trace
         # set_trace()
         import time
@@ -261,7 +255,6 @@ class PloomberNotebookClient(NotebookClient):
         time.sleep(2)
         await self._async_poll_stdin_msg(parent_msg_id, cell, cell_index)
         # time.sleep(2)
-        print('finished polling stdin message')
 
         # We launched a code cell to execute
         self.code_cells_executed += 1
@@ -283,10 +276,6 @@ class PloomberNotebookClient(NotebookClient):
                                        task_poll_output_msg,
                                        task_poll_kernel_alive))
 
-        print(f'poll for reply {cell_index}')
-        # if cell_index == 5:
-        #     from ipdb import set_trace
-        #     set_trace()
         try:
             exec_reply = await self.task_poll_for_reply
         except asyncio.CancelledError:
@@ -301,7 +290,6 @@ class PloomberNotebookClient(NotebookClient):
                     task_poll_output_msg.cancel()
             finally:
                 raise
-        print('end polling')
 
         if execution_count:
             cell['execution_count'] = execution_count
@@ -309,11 +297,11 @@ class PloomberNotebookClient(NotebookClient):
                        cell=cell,
                        cell_index=cell_index,
                        execute_reply=exec_reply)
-        print('checking error')
+
         await self._check_raise_for_error(cell, cell_index, exec_reply)
-        print('checked error')
+
         self.nb['cells'][cell_index] = cell
-        print(f'RETURNING CELL {cell_index}')
+
         return cell
 
     execute_cell = run_sync(async_execute_cell)
