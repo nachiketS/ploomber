@@ -185,5 +185,7 @@ setup(
     },
     entry_points={
         'console_scripts': ['ploomber=ploomber_cli.cli:cmd_router'],
+        "papermill.engine":
+        ["ploomber-engine=ploomber.papermill.engine:PloomberClientEngine"],
     },
 )
