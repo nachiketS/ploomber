@@ -39,6 +39,8 @@ class PloomberNotebookClient2(NotebookClient):
         await run_hook(self.on_notebook_start, notebook=self.nb)
         return self.kc
 
+    start_new_kernel_client = run_sync(async_start_new_kernel_client)
+
     async def _async_poll_stdin_msg(self, parent_msg_id: str,
                                     cell: NotebookNode,
                                     cell_index: int) -> None:
@@ -347,98 +349,6 @@ class PloomberNotebookClient(NotebookClient):
     """
     Encompasses a Client for executing cells in a notebook
     """
-    def reset_execution_trackers(self) -> None:
-        """Resets any per-execution trackers."""
-        self.task_poll_for_reply: t.Optional[asyncio.Future] = None
-        self.code_cells_executed = 0
-        self._display_id_map = {}
-        self.widget_state: t.Dict[str, t.Dict] = {}
-        self.widget_buffers: t.Dict[str, t.Dict[t.Tuple[str, ...],
-                                                t.Dict[str, str]]] = {}
-        # maps to list of hooks, where the last is used, this is used
-        # to support nested use of output widgets.
-        self.output_hook_stack: t.Any = collections.defaultdict(list)
-        # our front-end mimicking Output widgets
-        self.comm_objects: t.Dict[str, t.Any] = {}
-
-    def create_kernel_manager(self) -> KernelManager:
-        """Creates a new kernel manager.
-
-        Returns
-        -------
-        km : KernelManager
-            Kernel manager whose client class is asynchronous.
-        """
-        if not self.kernel_name:
-            kn = self.nb.metadata.get('kernelspec', {}).get('name')
-            if kn is not None:
-                self.kernel_name = kn
-
-        if not self.kernel_name:
-            self.km = self.kernel_manager_class(config=self.config)
-        else:
-            self.km = self.kernel_manager_class(kernel_name=self.kernel_name,
-                                                config=self.config)
-        assert self.km is not None
-
-        # If the current kernel manager is still using the default (synchronous) KernelClient class,
-        # switch to the async version since that's what NBClient prefers.
-        if self.km.client_class == 'jupyter_client.client.KernelClient':
-            self.km.client_class = 'jupyter_client.asynchronous.AsyncKernelClient'
-
-        return self.km
-
-    async def _async_cleanup_kernel(self) -> None:
-        assert self.km is not None
-        now = self.shutdown_kernel == "immediate"
-        try:
-            # Queue the manager to kill the process, and recover gracefully if it's already dead.
-            if await ensure_async(self.km.is_alive()):
-                await ensure_async(self.km.shutdown_kernel(now=now))
-        except RuntimeError as e:
-            # The error isn't specialized, so we have to check the message
-            if 'No kernel is running!' not in str(e):
-                raise
-        finally:
-            # Remove any state left over even if we failed to stop the kernel
-            await ensure_async(self.km.cleanup_resources())
-            if getattr(self, "kc", None) and self.kc is not None:
-                await ensure_async(self.kc.stop_channels())  # type:ignore
-                self.kc = None
-                self.km = None
-
-    _cleanup_kernel = run_sync(_async_cleanup_kernel)
-
-    async def async_start_new_kernel(self, **kwargs: t.Any) -> None:
-        """Creates a new kernel.
-
-        Parameters
-        ----------
-        kwargs :
-            Any options for ``self.kernel_manager_class.start_kernel()``. Because
-            that defaults to AsyncKernelManager, this will likely include options
-            accepted by ``AsyncKernelManager.start_kernel()``, which includes ``cwd``.
-        """
-        assert self.km is not None
-        resource_path = self.resources.get('metadata', {}).get('path') or None
-        if resource_path and 'cwd' not in kwargs:
-            kwargs["cwd"] = resource_path
-
-        has_history_manager_arg = any(
-            arg.startswith('--HistoryManager.hist_file')
-            for arg in self.extra_arguments)
-        if (hasattr(self.km, 'ipykernel') and self.km.ipykernel
-                and self.ipython_hist_file and not has_history_manager_arg):
-            self.extra_arguments += [
-                f'--HistoryManager.hist_file={self.ipython_hist_file}'
-            ]
-
-        await ensure_async(
-            self.km.start_kernel(extra_arguments=self.extra_arguments,
-                                 **kwargs))
-
-    start_new_kernel = run_sync(async_start_new_kernel)
-
     async def async_start_new_kernel_client(self) -> KernelClient:
         """Creates a new kernel client.
 
@@ -466,33 +376,6 @@ class PloomberNotebookClient(NotebookClient):
         return self.kc
 
     start_new_kernel_client = run_sync(async_start_new_kernel_client)
-
-    @contextmanager
-    def setup_kernel(self, **kwargs: t.Any) -> t.Generator:
-        """
-        Context manager for setting up the kernel to execute a notebook.
-
-        The assigns the Kernel Manager (``self.km``) if missing and Kernel Client(``self.kc``).
-
-        When control returns from the yield it stops the client's zmq channels, and shuts
-        down the kernel.
-        """
-        # by default, cleanup the kernel client if we own the kernel manager
-        # and keep it alive if we don't
-        cleanup_kc = kwargs.pop('cleanup_kc', self.owns_km)
-
-        # Can't use run_until_complete on an asynccontextmanager function :(
-        if self.km is None:
-            self.km = self.create_kernel_manager()
-
-        if not self.km.has_kernel:
-            self.start_new_kernel(**kwargs)
-            self.start_new_kernel_client()
-        try:
-            yield
-        finally:
-            if cleanup_kc:
-                self._cleanup_kernel()
 
     @asynccontextmanager
     async def async_setup_kernel(self, **kwargs: t.Any) -> t.AsyncGenerator:
